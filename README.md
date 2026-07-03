@@ -13,7 +13,7 @@ This repository is currently under active development for manuscript submission.
 At this stage, the repository provides:
 
 - R scripts for qualitative and quantitative property value generation;
-- R scripts for normality assessment, 均匀性检验, and stability assessment;
+- R scripts for normality assessment, homogeneity assessment, and stability assessment;
 - R scripts for certified property value generation;
 - R scripts for laboratory performance evaluation;
 - R scripts used to generate the main figures.
