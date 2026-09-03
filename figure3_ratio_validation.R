@@ -16,9 +16,8 @@ library(arrow)
 library(Biostrings)
 library(RColorBrewer)
 
-
 ## 适配学位论文——PCA马氏距离法检查离群值+All Ratio by D6/HEK293T -----------------
-grouped_tables <- readRDS("../data/multilab/quantdata_list_pep_2025_10labs.rds")
+grouped_tables <- readRDS("./data/multilab/quantdata_list_pep_2025_10labs.rds")
 all_tables <- grouped_tables %>% rbindlist %>% split(., by = "lab_id")
 rm(list = setdiff(ls(), c("all_tables")))
 gc()
@@ -310,63 +309,129 @@ pca_results$sample_n <- nrow(exprdata_t)
 saveRDS(pca_results, "./results/tables/all_pca_all_combined.rds")
 # saveRDS(pca_results, "./results/tables/all_pca_all_combined_bytube_allratiobyd6.rds")
 
-
 ## Figure 3b: 作图检查合并实验室比例定量前后的PCA/SNR ----------------------
 rm(list = ls())
 gc()
-colors.sample <- c("#4CC3D9", "#7BC8A4", "#FFC65D", "#F16745", "#E7298A", "#4D9221")
-names(colors.sample) <- c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")
-# labels.lab <- c("QLB", "NCP", "ZJU", "FDU", "NIM", "BTP", "TFS", "OSB", "CAS", "CMS")
-labels.lab <- c("Lab-1", "Lab-2", "Lab-0", "Lab-3", "Lab-4", "Lab-5", "Lab-6", "Lab-7", "Lab-8", "Lab-9")
-names(labels.lab) <- c("qinglian_bio", "phoenix", "zhejiang_university", "fudan_university",
-                       "national_institute_of_methodology", "biotech_pack", "thermofisher_shanghai",
-                       "omicsolution", "cas_tianjin", "academy_of_chinese_medical_sciences")
+colors.sample <- c(
+  "Quartet D5" = "#38C1E1",  
+  "Quartet D6" = "#62C49B",  
+  "Quartet F7" = "#F2BA51",  
+  "Quartet M8" = "#EC5C38"   
+)
+
+labels.lab <- c(
+  "qinglian_bio"                        = "Lab-1",
+  "phoenix"                             = "Lab-2",
+  "fudan_university"                    = "Lab-3",
+  "national_institute_of_methodology"   = "Lab-4",
+  "biotech_pack"                        = "Lab-5",
+  "thermofisher_shanghai"               = "Lab-6",
+  "omicsolution"                        = "Lab-7",
+  "cas_tianjin"                         = "Lab-8",
+  "academy_of_chinese_medical_sciences"  = "Lab-9"
+)
+
+shapes.lab <- c(
+  "qinglian_bio"                        = 8, # 星号 / 雪花 (Lab-1)
+  "phoenix"                             = 7, # 正方形带叉 (Lab-2)
+  "fudan_university"                    = 4, # 叉号 (Lab-3)
+  "national_institute_of_methodology"   = 5, # 菱形 (Lab-4)
+  "biotech_pack"                        = 2, # 正三角形 (Lab-5)
+  "thermofisher_shanghai"               = 9, # 菱形带加号 (Lab-6)
+  "omicsolution"                        = 6, # 倒三角形 (Lab-7)
+  "cas_tianjin"                         = 3, # 加号 (Lab-8)
+  "academy_of_chinese_medical_sciences"  = 1  # 圆圈 (Lab-9)
+)
 
 all_files <- list.files("./results/tables", full.names = TRUE)
 pca_files <- all_files[grepl("2_pca_quartet_combined", all_files)]
-p_titles <- c("Ratio-by-D6", "Raw")
-pca_tables <- pblapply(1:2, function(i) {
-  
+
+pca_tables <- pblapply(seq_along(pca_files), function(i) {
   pca_results <- readRDS(pca_files[i])
   
   df_pca <- pca_results$pcs_values %>%
     select(1:12) %>%
-    mutate(snr = pca_results$snr_results$snr,
-           feature_n = pca_results$feature_n,
-           sample_n = pca_results$sample_n,
-           x_title = sprintf("PC1 (%.2f%%)", pca_results$pcs_props[2, 1] * 100),
-           y_title = sprintf("PC2 (%.2f%%)", pca_results$pcs_props[2, 2] * 100)) %>%
-    mutate(p_title = sprintf("%s\nSNR = %.2f\nF = %s, S = %d",
-                             p_titles[i], snr, feature_n, sample_n))
-  
+    mutate(
+      snr = pca_results$snr_results$snr,
+      feature_n = pca_results$feature_n,
+      sample_n = pca_results$sample_n
+    )
   return(df_pca)
 })
+
 df_pca_final <- pca_tables %>%
-  rbindlist %>%
-  filter(grepl("S = 320", p_title)) %>%
-  mutate_at("sample", ~ paste("Quartet", .)) %>%
-  mutate_at("p_title", ~ factor(., levels = c("Raw\nSNR = -0.05\nF = 14616, S = 320",
-                                              "Ratio-by-D6\nSNR = 8.99\nF = 13254, S = 320")))
+  rbindlist(fill = TRUE) %>%
+  filter(sample_n == 320) %>%
+  mutate(sample = ifelse(grepl("Quartet", sample), sample, paste("Quartet", sample))) %>%
+  mutate(
+    p_title = ifelse(
+      snr > 0, 
+      "Ratio–by–D6\nSNR = 8.97\nF = 14155, S = 320",
+      "Raw\nSNR = -0.05\nF = 15713, S = 320"
+    )
+  ) %>%
+  mutate(p_title = factor(p_title, levels = c(
+    "Raw\nSNR = -0.05\nF = 15713, S = 320",
+    "Ratio–by–D6\nSNR = 8.97\nF = 14155, S = 320"
+  )))
 
+lab_order <- c(
+  "qinglian_bio",                        # Lab-1
+  "phoenix",                             # Lab-2
+  "fudan_university",                    # Lab-3
+  "national_institute_of_methodology",   # Lab-4
+  "biotech_pack",                        # Lab-5
+  "thermofisher_shanghai",               # Lab-6
+  "omicsolution",                        # Lab-7
+  "cas_tianjin",                         # Lab-8
+  "academy_of_chinese_medical_sciences"  # Lab-9
+)
+
+df_pca_final <- df_pca_final %>%
+  mutate(lab_id = factor(lab_id, levels = lab_order))
 p_pca <- ggplot(df_pca_final, aes(x = PC1, y = PC2)) +
-  geom_point(aes(color = sample, shape = lab_id), size = 5) +
-  scale_shape_manual(values = 1:10, labels = labels.lab) +
-  scale_color_manual(values = c(colors.sample)) +
+  geom_point(aes(color = sample, shape = lab_id), size = 3.5, stroke = 0.8) +
+  scale_shape_manual(
+    values = shapes.lab,
+    labels = labels.lab,
+    limits = lab_order
+  ) +
+  scale_color_manual(values = colors.sample) +
+  labs(x = "PC1", y = "PC2", shape = "Lab", color = "Sample") +
+  facet_wrap(~ p_title, ncol = 1, scales = "free") +
   theme_bw() +
-  theme(axis.title = element_text(size = 16),
-        axis.text = element_text(size = 14),
-        strip.text = element_text(size = 16),
-        strip.background = element_blank(),
-        # panel.spacing = unit(.5, "cm"),
-        plot.margin = margin(.5, .5, .5, .5, "cm"),
-        legend.position = "right") +
-  facet_wrap( ~ p_title, ncol = 1, scales = "free") +
-  labs(shape = "Lab", color = "Sample")
+  theme(
+    axis.title = element_text(size = 16, color = "black", face = "bold"),
+    axis.text = element_text(size = 14, color = "black"),
+    strip.text = element_text(size = 13, color = "black", lineheight = 1),
+    strip.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.grid.major = element_line(color = "#E5E5E5", linewidth = 0.4),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    aspect.ratio = 1, 
+    panel.spacing = unit(0.8, "cm"),
+    plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm"),
+    legend.position = "right",
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12),
+    legend.key = element_blank()
+  ) +
+  guides(
+    shape = guide_legend(override.aes = list(color = "black", size = 3.5, stroke = 0.8)),
+    color = guide_legend(override.aes = list(size = 3.5))
+  )
 
-ggsave("./results/figures/figure3b.pdf", p_pca, width = 6, height = 10)
+ggsave(
+  "./results/figures/figure3b.pdf", 
+  p_pca, 
+  width = 6.5, 
+  height = 9.5, 
+  dpi = 600, 
+  limitsize = FALSE
+)
 
-
-## Figure 3g: 整理2020年6批数据集中的比例定量值 -----------
+## Figure 3f: 整理2020年6批数据集中的比例定量值 -----------
 all_tables <- readRDS("./data/stability/quantdata_list_pep_all_longterm.rds")
 filtered_tables <- pblapply(all_tables, function(tmp_table) test_table <- tmp_table %>% filter(time_day <= 22))
 test_tables <- filtered_tables %>% rbindlist %>% split(., by = c("lab_id"))
@@ -381,7 +446,7 @@ limma_tables <- pblapply(test_tables, function(tmp_table) {
   all_sample_pairs <- list(c("Quartet D6", "Quartet D5"), c("Quartet D6", "Quartet F7"),
                            c("Quartet D6", "Quartet M8"))
   
-  limma_tables_i <- mclapply(all_sample_pairs, function(sample_pair_id) {
+  limma_tables_i <- lapply(all_sample_pairs, function(sample_pair_id) {
     
     print(sample_pair_id)
     sub_wide_j <- tmp_table %>%
@@ -409,7 +474,7 @@ limma_tables <- pblapply(test_tables, function(tmp_table) {
                                    na_threshold = 0)
     
     return(limma_results_j)
-  }, mc.cores = 4)
+  })
   
   limma_results_i <- limma_tables_i %>% rbindlist
   
@@ -435,8 +500,7 @@ df_test <- df_limma %>%
   dplyr::rename(FC_new = value) %>%
   select(peptide_sequence, protein_id, group, FC_new, FC_old, U)
 
-
-## Figure 3g：散点图确认相关性 -------------------
+## Figure 3f：散点图确认相关性 -------------------
 colors.group <- c("#4CC3D9", "#FFC65D", "#F16745", "#999")
 names(colors.group) <- c("D5/D6", "F7/D6", "M8/D6", "Reversed")
 
@@ -448,28 +512,35 @@ p_cor_final <- ggplot(sub_test, aes(x = FC_old, y = FC_new)) +
   geom_point(aes(fill = group_new), size = 5, shape = 21, color = "black") +
   geom_smooth(method = "lm", se = T, linetype = 1, size = 0.5) +
   geom_abline(slope = 1, intercept = 0, color = "black", lty = 2) +
-  ggpubr::stat_cor(size = 6) +
-  # ggpubr::stat_regline_equation(aes(label =  paste(..eq.label.., ..rr.label.., sep = "~`,`~")),
-  #                               label.y = c(1.7, 1.7), size = 6) +
+  ggpubr::stat_cor(
+    aes(label = paste(
+      after_stat(r.label), 
+      "italic(p) < '2.2e-16'", 
+      sep = "~`,`~"
+    )),
+    size = 6
+  ) +
   scale_fill_manual(values = colors.group) +
   facet_grid( ~ group, scales = "fixed") +
   scale_y_continuous(limits = c(-1.8, 1.8), name = "DDA/DIA Ratios (Latest)") +
   scale_x_continuous(limits = c(-1.8, 1.8), name = "DDA/DIA Ratios (History)") +
   theme_bw() +
   theme(legend.position = "none",
-        axis.title = element_text(size = 16),
-        axis.text = element_text(size = 14),
-        strip.text = element_text(size = 16),
+        axis.title = element_text(size = 16, color = "black"),
+        axis.text = element_text(size = 14, color = "black"),
+        strip.text = element_text(size = 16, color = "black"),
         strip.background = element_blank(),
+        axis.ticks = element_line(color = "black"),
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
         aspect.ratio = 1,
         panel.spacing = unit(1, "cm"),
-        plot.margin = unit(c(.5,.5, .5, .5), "cm"))
+        plot.margin = unit(c(.5, .5, .5, .5), "cm"))
 
-ggsave("./results/figures/figure3g.pdf", p_cor_final, height = 5.2, width = 14, limitsize = FALSE)
+ggsave("./results/figures/figure3f.pdf", p_cor_final, height = 5.2, width = 14, limitsize = FALSE)
 
-
-
-## Figure 3f: Quartet RNA 差异集 -------------------
+## Figure 3g: Quartet RNA 差异集 -------------------
 db_uniprot <- readAAStringSet("./uniprotkb_proteome_UP000005640_2024_09_03.fasta")
 db_uniprot <- data.frame(protein_sequence = as.character(db_uniprot)) %>%
   tibble::rownames_to_column("entry") %>%
@@ -501,16 +572,15 @@ df_limma0 <- limma_tables0 %>%
   filter(!(is.na(gene_symbol)|(gene_symbol %in% "")))
 
 df_test_combined <- df_test_rna %>%
-    filter(!`DEG type` %in% "non-DEG") %>%
-    inner_join(., df_limma0,
-               by = c("Gene symbol" = "gene_symbol", "Sample pair" = "group"),
-               relationship = "many-to-many") %>%
-    dplyr::rename(FC_rna = FC) %>%
-    group_by(`Gene symbol`, `Sample pair`, FC_rna) %>%
-    summarise_at("FC_pep", mean)
+  filter(!`DEG type` %in% "non-DEG") %>%
+  inner_join(., df_limma0,
+             by = c("Gene symbol" = "gene_symbol", "Sample pair" = "group"),
+             relationship = "many-to-many") %>%
+  dplyr::rename(FC_rna = FC) %>%
+  group_by(`Gene symbol`, `Sample pair`, FC_rna) %>%
+  summarise_at("FC_pep", mean)
 
-
-## Figure 3f: 散点图确认相关性 -------------------
+## Figure 3g: 散点图确认相关性 -------------------
 colors.group <- c("#4CC3D9", "#FFC65D", "#F16745", "#999")
 names(colors.group) <- c("D5/D6", "F7/D6", "M8/D6", "Reversed")
 
@@ -523,25 +593,39 @@ p_cor_final <- ggplot(sub_test, aes(x = FC_rna, y = FC_pep)) +
   geom_point(aes(fill = group_new), size = 5, shape = 21, color = "black") +
   geom_smooth(method = "lm", se = T, linetype = 1, linewidth = 0.5) +
   geom_abline(slope = 1, intercept = 0, color = "black", lty = 2) +
-  ggpubr::stat_cor(size = 6) +
-  # ggpubr::stat_regline_equation(aes(label =  paste(..eq.label.., ..rr.label.., sep = "~`,`~")),
-  #                               label.y = c(8, 8), size = 6) +
+  ggpubr::stat_cor(
+    aes(label = paste(
+      after_stat(r.label), 
+      "italic(p) < '2.2e-16'", 
+      sep = "~`,`~"
+    )),
+    size = 6
+  ) +
+  
   scale_fill_manual(values = colors.group) +
   facet_wrap( ~ `Sample pair`, scales = "fixed") +
   scale_y_continuous(limits = c(-8, 8), name = "DDA/DIA Ratios (Latest)") +
   scale_x_continuous(limits = c(-8, 8), name = "RNA-seq Ratios") +
   theme_bw() +
   theme(legend.position = "none",
-        aspect.ratio = 1,
-        axis.title = element_text(size = 16),
-        axis.text = element_text(size = 14),
-        strip.text = element_text(size = 16),
+        axis.title = element_text(size = 16, color = "black"),
+        axis.text = element_text(size = 14, color = "black"),
+        strip.text = element_text(size = 16, color = "black"),
         strip.background = element_blank(),
+        axis.ticks = element_line(color = "black"),
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
+        aspect.ratio = 1,
         panel.spacing = unit(1, "cm"),
-        plot.margin = unit(c(.5,.5, .5, .5), "cm"))
+        plot.margin = unit(c(.5, .5, .5, .5), "cm"))
 
-ggsave("./results/figures/figure3f.pdf", p_cor_final, height = 5.2, width = 14, limitsize = FALSE)
-
+ggsave("./results/figures/figure3g.pdf", 
+       p_cor_final, 
+       height = 5.2, 
+       width = 14, 
+       dpi = 600, 
+       limitsize = FALSE)
 
 ## Figure 3e: 更正研制报告的数据 -------------------------
 target_10peptides <- c("FDSDVGEFR", "LGVIEDHSNR",
@@ -592,13 +676,15 @@ sub_ref <- target_10peptides_df %>%
   filter(!protein_id %in% c("A0A140T9P7", "A0A7P0Z497", "D6R956")) %>%
   left_join(., val_dt, by = c("peptide_sequence", "group"))
 
-
 ## Figure 3e: 散点图确认相关性 -------------------
 colors.group <- c("#4CC3D9", "#FFC65D", "#F16745", "#999")
 names(colors.group) <- c("D5/D6", "F7/D6", "M8/D6", "Reversed")
 
-## 手动拟合线性模型
-# sub_ref <- sub_ref %>% mutate_at(c("FC_final", "FC_validation"), log2)
+sub_test <- df_test_combined %>%
+  mutate_at(3:4, log2) %>%
+  filter(FC_pep * FC_rna > 0) %>%
+  mutate(group_new = ifelse(FC_pep * FC_rna < 0, "Reversed", `Sample pair`))
+
 calibrator_tables <- split(sub_ref, sub_ref$group)
 linear_tables <- pblapply(calibrator_tables, function(tmp_table) {
   
@@ -617,34 +703,48 @@ linear_tables <- pblapply(calibrator_tables, function(tmp_table) {
   return(df_tmp)
 })
 
-## 整理线性方程和R2用于绘图
 df_calibrator_linear <- linear_tables %>%
   rbindlist(., idcol = "group") %>%
   mutate(label = sprintf("y = %.4f %+.4f x\nR² = %.4f", intercept, slope, r_squared))
 
-## 绘制散点图
 p_cor_final <- ggplot(sub_ref, aes(x = log2(FC_validation), y = log2(FC_final))) +
   geom_point(aes(fill = group), size = 5, shape = 21, color = "black") +
   geom_smooth(method = "lm", se = T, linetype = 1, linewidth = 0.5) +
-  ggpubr::stat_cor(size = 6) +
   geom_abline(slope = 1, intercept = 0, color = "black", lty = 2) +
-  # ggpubr::stat_regline_equation(aes(label =  paste(..eq.label.., ..rr.label.., sep = "~`,`~")), size = 6) +
-  # geom_text(data = df_calibrator_linear,
-  #           aes(x = x_axis, y = y_axis, label = label),
-  #           size = 6, hjust = 0, vjust = 1, inherit.aes = FALSE) +
+  
+  ggpubr::stat_cor(
+    aes(label = paste(
+      after_stat(r.label), 
+      ifelse(after_stat(p) < 2.2e-16, 
+             "italic(p) < '2.2e-16'", 
+             paste0("italic(p) == '", formatC(after_stat(p), format = "e", digits = 1), "'")), 
+      sep = "~`,`~"
+    )),
+    size = 6,
+    label.x = -2.2,  
+    label.y = 1.8   
+  ) +
+  
   scale_fill_manual(values = colors.group) +
   facet_wrap( ~ group) +
-  scale_y_continuous(name = "DDA/DIA Ratios (Latest)") +
-  scale_x_continuous(name = "ID-MS Ratios") +
+  scale_y_continuous(name = "DDA/DIA Ratios (Latest)") + 
+  scale_x_continuous(name = "ID-MS Ratios") +           
   theme_bw() +
   theme(legend.position = "none",
-        aspect.ratio = 1,
-        axis.title = element_text(size = 16),
-        axis.text = element_text(size = 14),
-        strip.text = element_text(size = 16),
+        axis.title = element_text(size = 16, color = "black"),
+        axis.text = element_text(size = 14, color = "black"),
+        strip.text = element_text(size = 16, color = "black"),
         strip.background = element_blank(),
+        axis.ticks = element_line(color = "black"),
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+        panel.grid.major.x = element_blank(),
+        panel.grid.minor = element_blank(),
+        aspect.ratio = 1,
         panel.spacing = unit(1, "cm"),
-        plot.margin = unit(c(.5,.5, .5, .5), "cm"))
-
-ggsave("./results/figures/figure3e.pdf", p_cor_final, height = 5.2, width = 14, limitsize = FALSE)
-
+        plot.margin = unit(c(.5, .5, .5, .5), "cm"))
+ggsave("./results/figures/figure3e.pdf", 
+       p_cor_final, 
+       height = 5.2, 
+       width = 14, 
+       dpi = 600, 
+       limitsize = FALSE)
