@@ -388,155 +388,287 @@ p2d <- ggplot(df_cv_test, aes(x = reorder(lab_id, cv, median), y = cv)) +
 
 ggsave("./results/figures/supp_figure2d.pdf", p2d, width = 8, height = 4, limitsize = FALSE, dpi = 600)
 
+## 统计原始肽段/蛋白质数目 -------------------
+rm(list = ls())
+grouped_seq_tables <- readRDS("./results/tables/1_qualidata_list_pro_coverage_2026_10labs.rds")
+grouped_pep_tables <- readRDS("./data/multilab/qualidata_list_pep_2025_10labs.rds")
 
-## Supplementary Figure 3a: 原始值验证-检查本地9家实验室间的原始值散点图 ----------------------
-rm(list = setdiff(ls(), c("labels.lab", "colors.sample")))
-gc()
 
-local_meta <- fread("./data/multilab/metadata_2025_10labs.csv")
-all_tables <- readRDS("./data/multilab/quantdata_list_pep_2025_10labs.rds")
-qualipr_tables <- readRDS("./data/multilab/qualidata_list_pep_2025_10labs.rds")
-
-meta_quartet <- fread("./results/tables/2_outlier_madist_quartet.csv")
-outliers <- meta_quartet$analysis_id[meta_quartet$is.outlier]
-
-filtered_tables <- pblapply(1:6, function(i) {
-  tmp_quant_table <- qualipr_tables[[i]] %>%
-    distinct(analysis_id, peptide_sequence, protein_id) %>%
-    inner_join(., all_tables[[i]], by = c("analysis_id", "peptide_sequence"), 
-               relationship = "many-to-many") %>%
-    filter(!analysis_id %in% outliers)
-  return(tmp_quant_table)
+## 删去ZJU ---------------------
+grouped_seq_tables <- pblapply(grouped_seq_tables, function(tmp_table) {
+  stat_tmp_table <- tmp_table %>%
+    filter(!lab_id %in% c("zhejiang_university"))
+  return(stat_tmp_table)
 })
-names(filtered_tables) <- names(all_tables)
+grouped_pep_tables <- pblapply(grouped_pep_tables, function(tmp_table) {
+  stat_tmp_table <- tmp_table %>%
+    filter(!lab_id %in% c("zhejiang_university"))
+  return(stat_tmp_table)
+})
+stat_pep_tables <- pblapply(grouped_pep_tables, function(tmp_table) {
+  stat_tmp_table <- tmp_table %>%
+    ungroup() %>%
+    filter(!lab_id %in% c("zhejiang_univarsity")) %>%
+    summarise(peptide_n = length(unique(peptide_sequence)),
+              protein_n = length(unique(protein_id)), .groups = "drop")
+  return(stat_tmp_table)
+})
+stat_df0 <- rbindlist(stat_pep_tables, idcol = "sample")
+stat_df0$tier = "All queries."
 
-all_cor_tables <- pblapply(filtered_tables, function(tmp_table) {
-  all_peps1 <- tmp_table %>%
-    mutate_at("lab_id", ~ labels.lab[.]) %>%
-    mutate_at("value", ~ ifelse(. == 0, NA, log2(.))) %>%
-    reshape2::dcast(., peptide_sequence + protein_id ~ lab_id + tube + injection,
-                    value.var = "value", fun.aggregate = sum) %>%
-    select(!contains("Lab-0"))
+View(grouped_pep_tables[[1]] %>% filter(peptide_sequence %in% "FDSDVGEFR"))
+
+## Figure 2b: 以D6为例展示不同实验室投票+SC阈值下的蛋白质数目 ------------------
+curveSC_tables <- pblapply(grouped_seq_tables, function(table_tmp) {
   
-  all_peps_cor <- all_peps1[, 3:ncol(all_peps1)] %>%
-    mutate_all(~ ifelse(. == 0, NA, .)) %>%
-    cor_test %>%
-    filter(cor != 1, p < .05) %>%
-    mutate(label = ifelse(str_extract(var1, "^Lab-\\d+") == str_extract(var2, "^Lab-\\d+"),
-                          "Intra-lab",
-                          "Inter-lab"))
-  return(all_peps_cor)
-})
-
-df_cor <- all_cor_tables %>%
-  rbindlist(., idcol = "Sample") %>%
-  mutate_at("Sample", ~ ifelse(. %in% c("D5", "D6", "F7", "M8"), paste("Quartet", .), .)) %>%
-  mutate_at("Sample", ~ factor(., levels = c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")))
-
-fwrite(df_cor, "./results/tables/3_cor.csv")
-
-pcc_thres <- df_cor %>%
-  group_by(label, Sample) %>%
-  summarise(pcc_median = median(cor), .groups = "drop")
-
-p3a <- ggplot(df_cor, aes(x = label, y = cor, fill = Sample)) +
-  geom_boxplot(outliers = FALSE, width = .7, position = position_dodge(width = 1), 
-               color = "black", linewidth = .5) +
-  geom_text(aes(x = label, y = pcc_median,
-                label = sprintf("%.2f", pcc_median)),
-            data = pcc_thres, size = 3.5, vjust = -.5, color = "black",
-            position = position_dodge(width = 1)) +
-  scale_y_continuous(name = "Pearson Correlation Coefficient",
-                     limits = c(0, 1), breaks = seq(0, 1, .1)) +
-  scale_fill_manual(values = colors.sample) +
-  labs(title = "Raw") +
-  theme_bw() +
-  theme(legend.position = "right",
-        legend.text = element_text(size = 12, color = "black"),
-        legend.title = element_text(size = 14, color = "black"),
-        strip.text = element_text(size = 14, face = "bold", color = "black", margin = margin(0.3, 0.3, 0.3, 0.3, "cm")),
-        strip.background = element_blank(),
-        axis.title.y = element_text(size = 14, color = "black", face = "bold"),
-        axis.title.x = element_blank(),
-        axis.text = element_text(size = 12, color = "black"),
-        panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
-        panel.grid.major.x = element_blank(),
-        panel.grid.minor.y = element_blank(),
-        panel.spacing = unit(.5, "cm"),
-        plot.margin = unit(c(.5, .5, .5, .5), units = "cm"),
-        plot.title = element_text(size = 16, color = "black", face = "bold"))
-
-ggsave("./results/figures/supp_figure3a.pdf",
-       p3a, width = 8, height = 5, limitsize = FALSE, dpi = 600, device = cairo_pdf)
-
-
-## Supplementary Figure 3b ----------------------
-rm(list = setdiff(ls(), c("labels.lab", "colors.sample")))
-gc()
-
-local_tables <- readRDS("./results/tables/2_limma_bylab_bytube.rds")
-
-all_cor_tables <- pblapply(local_tables, function(tmp_table) {
-  all_peps1 <- tmp_table %>%
-    filter(adj.P.Val < .05, abs(logFC) >= 1) %>%
-    mutate_at("lab_id", ~ labels.lab[.]) %>%
-    reshape2::dcast(., peptide_sequence + protein_id ~ lab_id + tube, value.var = "logFC") %>%
-    select(!contains("Lab-0"))
+  tmp_tables <- pblapply(c(10, 20, 30, 40, 50), function(j) {
+    filtered_queries <- table_tmp %>%
+      group_by(protein_id, lab_id) %>%
+      summarise(pass_n = length(unique(analysis_id[coverage > j & !is.na(coverage)])),
+                total_n = length(unique(analysis_id)), .groups = "drop") %>%
+      mutate(coverage_label = paste("> ", j, "%", sep = ""))
+    
+    return(filtered_queries)
+  })
   
-  all_peps_cor <- all_peps1[, 3:ncol(all_peps1)] %>%
-    cor_test %>%
-    filter(cor != 1, p < .05) %>%
-    mutate(label = ifelse(str_extract(var1, "^Lab-\\d+") == str_extract(var2, "^Lab-\\d+"),
-                          "Intra-lab",
-                          "Inter-lab"))
-  return(all_peps_cor)
+  sub_pro_table <- tmp_tables %>%
+    rbindlist %>%
+    filter(total_n - pass_n == 0) %>%
+    group_by(protein_id, coverage_label) %>%
+    summarise(lab_n = length(unique(lab_id)), .groups = "drop")
+  
+  filtered_tables_i <- lapply(1:9, function(j) {
+    filtered_queries <- sub_pro_table %>%
+      filter(lab_n >= j) %>%
+      mutate(group = paste("\u2265", j, "Lab(s)"))
+    return(filtered_queries)
+  })
+  df_all_i <- rbindlist(filtered_tables_i)
+  
+  return(df_all_i)
 })
 
-df_cor <- all_cor_tables %>%
-  rbindlist(., idcol = "Sample Pair") %>%
-  mutate_at("Sample Pair", ~ factor(., levels = c("D5/D6", "F7/D6", "M8/D6", "HeLa/HEK293T")))
+df_subSC1 <- curveSC_tables %>%
+  rbindlist(., idcol = "sample") %>%
+  filter(sample %in% c("D6")) %>%
+  mutate(sample = "Quartet D6")
 
-pcc_thres <- df_cor %>%
-  group_by(label, `Sample Pair`) %>%
-  summarise(pcc_median = median(cor), .groups = "drop")
-
-colors.ratio <- c("#4CC3D9", "#FFC65D", "#F16745", "#E7298A")
-names(colors.ratio) <- c("D5/D6", "F7/D6", "M8/D6", "HeLa/HEK293T")
-
-p3b <- ggplot(df_cor, aes(x = label, y = cor, fill = `Sample Pair`)) +
-  geom_boxplot(outliers = FALSE, width = .7, position = position_dodge(width = 1), 
-               color = "black", linewidth = .5) +
-  geom_text(aes(x = label, y = pcc_median,
-                label = sprintf("%.2f", pcc_median)),
-            data = pcc_thres, size = 3.5, vjust = -.5, color = "black",
-            position = position_dodge(width = 1)) +
-  scale_y_continuous(name = "Pearson Correlation Coefficient",
-                     limits = c(0, 1), breaks = seq(0, 1, .1)) +
-  scale_fill_manual(values = colors.ratio) +
-  labs(title = "SRR-scaled") +
+p_figure2b <- ggplot(df_subSC1) +
+  geom_bar(aes(x = group, y = after_stat(count), fill = coverage_label),
+           stat = "count", position = "dodge", color = "black") +
+  facet_grid(cols = vars(sample)) +
+  geom_hline(yintercept = 2074, linetype = "dashed", color = "#CB181D", alpha = 0.6) +
+  annotate("text", x = "\u2265 3 Lab(s)", y = 2500, label = "N = 2,074",
+           color = "#CB181D", size = 6) +
+  scale_fill_brewer(palette = "Blues") +
+  scale_x_discrete(expand = c(0.06, 0.05)) +
+  scale_y_continuous(n.breaks = 10, expand = c(0.02, 0.01)) +
+  labs(
+    x = "Consensus Filtering",
+    y = "Number of Retained Proteins",
+    fill = "Filter") +
   theme_bw() +
-  theme(legend.position = "right",
-        legend.text = element_text(size = 12, color = "black"),
-        legend.title = element_text(size = 14, color = "black"),
-        strip.text = element_text(size = 14, face = "bold", color = "black", margin = margin(0.3, 0.3, 0.3, 0.3, "cm")),
-        strip.background = element_blank(),
-        axis.title.y = element_text(size = 14, color = "black", face = "bold"),
-        axis.title.x = element_blank(),
-        axis.text = element_text(size = 12, color = "black"),
-        panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
-        panel.grid.major.x = element_blank(),
-        panel.grid.minor.y = element_blank(),
-        panel.spacing = unit(.5, "cm"),
-        plot.margin = unit(c(.5, .5, .5, .5), units = "cm"),
-        plot.title = element_text(size = 16, color = "black", face = "bold"))
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 16, color = "black"),
+    legend.title = element_text(size = 20, color = "black"),
+    strip.background = element_blank(),
+    strip.text = element_text(size = 20, color = "black"),
+    axis.text.x = element_text(size = 14, angle = 45, hjust = 1, vjust = 1, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title = element_text(size = 16, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_line(color = "black"),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "gray80", linewidth = 0.5),
+    panel.grid.minor = element_line(color = "gray90", linewidth = 0.3)
+  )
 
-ggsave("./results/figures/supp_figure3b.pdf",
-       p3b, width = 8, height = 4.5, limitsize = FALSE, dpi = 600, device = cairo_pdf)
+p_figure2b
+ggsave("./results/figures/figure2b.pdf", 
+       p_figure2b, width = 10, height = 5.3, 
+       dpi = 600, device = cairo_pdf)
 
-## Supplementary Figure 3: D5/F7/M8/HeLa/HEK293T展示投票+PEP阈值 --------------
-library(tidyverse)
-library(data.table)
+## Tier1: 至少3家实验室所有运行证据支持SC>30% ------------------------
+passSC0.3_pep_tables <- pblapply(1:6, function(i) {
+  
+  sub_pro_table <- grouped_seq_tables[[i]] %>%
+    group_by(protein_id, lab_id) %>%
+    summarise(pass_n = length(unique(analysis_id[coverage > 30&!is.na(coverage)])),
+              total_n = length(unique(analysis_id)), .groups = "drop") %>%
+    filter(total_n - pass_n == 0) %>%
+    group_by(protein_id) %>%
+    summarise(lab_n = length(unique(lab_id)), .groups = "drop") %>%
+    filter(lab_n >= 3) %>%
+    distinct(protein_id)
+  
+  sub_pep_table <- grouped_pep_tables[[i]] %>%
+    inner_join(., sub_pro_table, by = c("protein_id"))
+  
+  return(sub_pep_table)
+})
+names(passSC0.3_pep_tables) <- names(grouped_pep_tables)
+stat_pep_tables <- pblapply(passSC0.3_pep_tables, function(tmp_table) {
+  stat_tmp_table <- tmp_table %>%
+    ungroup() %>%
+    summarise(peptide_n = length(unique(peptide_sequence)),
+              protein_n = length(unique(protein_id)))
+  return(stat_tmp_table)
+})
+stat_df1 <- rbindlist(stat_pep_tables, idcol = "sample")
+stat_df1$tier = "At least 3 labs support sequence coverage > 30%."
 
+View(passSC0.3_pep_tables[[1]] %>% filter(peptide_sequence %in% "FDSDVGEFR"))
+
+## Figure 2c 展示不同实验室投票+PEP阈值下的肽段-蛋白质数目 ----------------------
+curvePEP_tables <- pblapply(passSC0.3_pep_tables, function(table_tmp) {
+  
+  sub_pro_table <- table_tmp %>%
+    group_by(peptide_sequence, protein_id, lab_id) %>%
+    mutate(pass_n = length(unique(analysis_id[pep < .01 & !is.na(pep)])),
+           total_n = length(unique(analysis_id))) %>%
+    filter(total_n - pass_n == 0) %>%
+    group_by(peptide_sequence, protein_id) %>%
+    summarise(lab_n = length(unique(lab_id)),
+              pep_min = min(pep, na.rm = TRUE), .groups = "drop")
+  filtered_tables_i <- pblapply(1:9, function(j) {
+    filtered_queries <- sub_pro_table %>%
+      filter(lab_n >= j) %>%
+      mutate(group = paste("\u2265", j, "Lab(s)"))
+    return(filtered_queries)
+  })
+  df_all_i <- rbindlist(filtered_tables_i)
+  
+  return(df_all_i)
+})
+
+df_subPEP1 <- curvePEP_tables %>%
+  rbindlist(., idcol = "sample") %>%
+  mutate_at("sample", ~ ifelse(. %in% c("D5", "D6", "F7", "M8"), paste("Quartet", .), .)) %>%
+  filter(sample %in% c("Quartet D6")) %>%
+  mutate(pep_trans = -log10(pep_min)) %>%
+  mutate_at("pep_trans", ~ ifelse(is.infinite(.), 400, .))
+
+df_subPEP1$group <- factor(df_subPEP1$group, 
+                           levels = c("\u2265 1 Lab(s)", "\u2265 2 Lab(s)", "\u2265 3 Lab(s)", 
+                                      "\u2265 4 Lab(s)", "\u2265 5 Lab(s)", "\u2265 6 Lab(s)", 
+                                      "\u2265 7 Lab(s)", "\u2265 8 Lab(s)", "\u2265 9 Lab(s)"))
+
+df_subPEP2 <- df_subPEP1 %>%
+  group_by(sample, group) %>%
+  summarise(feature_n = length(unique(peptide_sequence)), .groups = "drop")
+
+ymax_pep <- max(df_subPEP1$pep_trans, na.rm = TRUE)
+ymax_n   <- max(df_subPEP2$feature_n, na.rm = TRUE)
+scale_factor <- ymax_pep / ymax_n
+
+colors.sample <- c("#4CC3D9", "#7BC8A4", "#FFC65D", "#F16745", "#E7298A", "#4D9221")
+names(colors.sample) <- c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")
+
+p_figure2c <- ggplot(df_subPEP1, aes(x = group, y = pep_trans)) +
+  geom_boxplot(aes(fill = group), outliers = FALSE, color = "black") +  
+  facet_grid(cols = vars(sample)) +
+  geom_line(data = df_subPEP2, aes(x = group, y = feature_n * scale_factor, group = 1),
+            inherit.aes = FALSE, linewidth = 1, color = "black") +
+  geom_point(data = df_subPEP2, aes(x = group, y = feature_n * scale_factor),
+             inherit.aes = FALSE, size = 2.5, color = "black") +
+  annotate("text", x = "\u2265 3 Lab(s)", y = 26000 * scale_factor,
+           label = "N = 23,885", color = "#CB181D", size = 6) +
+  scale_fill_brewer(palette = "Blues") +
+  scale_x_discrete(expand = c(0.05, 0.05)) +
+  scale_y_continuous(
+    name = expression(-lg(PEP)~Value),
+    breaks = seq(0, 400, 50),
+    expand = c(0.02, 0.01),
+    sec.axis = sec_axis(~ (.) / scale_factor,
+                        name = "Number of Retained Peptides",
+                        breaks = seq(0, 40000, 5000))
+  ) +
+  labs(x = "Consensus Filtering",
+       fill = "Filter") +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    legend.text = element_text(size = 16, color = "black"),
+    legend.title = element_text(size = 20, color = "black"),
+    strip.background = element_blank(),
+    strip.text = element_text(size = 20, color = "black"),
+    axis.text.x = element_text(size = 14, angle = 45, hjust = 1, vjust = 1, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title = element_text(size = 16, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_line(color = "black"),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "gray80", linewidth = 0.5),
+    panel.grid.minor = element_line(color = "gray90", linewidth = 0.3),
+    axis.title.y.right = element_text(size = 16, color = "black")
+  )
+
+p_figure2c
+
+ggsave("./results/figures/figure2c.pdf", 
+       p_figure2c, width = 9.5, height = 5.3, 
+       dpi = 600, device = cairo_pdf)
+
+## Supplementary Figure 3------------------
+df_subSC2 <- curveSC_tables %>%
+  rbindlist(., idcol = "sample") %>%
+  mutate_at("sample", ~ ifelse(. %in% c("D5", "D6", "F7", "M8"), paste("Quartet", .), .)) %>%
+  filter(sample %in% c("HEK293T", "HeLa", "Quartet D5", "Quartet F7", "Quartet M8")) %>%
+  mutate(sample = factor(sample, levels = c("HEK293T", "HeLa", "Quartet D5", "Quartet F7", "Quartet M8")))
+
+no_thres <- data.frame(
+  sample = c("HEK293T", "HeLa", "Quartet D5", "Quartet F7", "Quartet M8"),
+  number_thres = c(1875, 1745, 1806, 2032, 2052)
+) %>%
+  mutate(sample = factor(sample, levels = c("HEK293T", "HeLa", "Quartet D5", "Quartet F7", "Quartet M8")))
+
+p_figure3b <- ggplot(df_subSC2) +
+  geom_bar(aes(x = group, y = after_stat(count), fill = coverage_label),
+           stat = "count", position = "dodge", color = "black") +
+  facet_grid(rows = vars(sample)) +
+  geom_hline(aes(yintercept = number_thres), data = no_thres,
+             linetype = "dashed", color = "#CB181D", alpha = 0.6) +
+  geom_text(aes(x = "\u2265 3 Lab(s)", y = number_thres, 
+                label = sprintf("N = %s", format(number_thres, big.mark = ",", scientific = FALSE))),
+            data = no_thres, color = "#CB181D", size = 5, vjust = -1) +
+  scale_fill_brewer(palette = "Blues") +
+  scale_x_discrete(expand = c(0.06, 0.05)) +
+  scale_y_continuous(n.breaks = 5, expand = c(0.02, 0.01)) +
+  labs(
+    x = "Consensus Filtering",
+    y = "Number of Retained Proteins",
+    fill = "Filter") +
+  theme_bw() +
+  theme(
+    legend.position = "right",  # 如果需要显示图例可改为 "right"（对应图二右侧图例）
+    legend.text = element_text(size = 12, color = "black"),
+    legend.title = element_text(size = 14, color = "black"),
+    strip.text = element_text(size = 14, face = "bold", color = "black", margin = margin(0.3, 0.3, 0.3, 0.3, "cm")),
+    strip.background = element_blank(),
+    axis.title.y = element_text(size = 14, color = "black", face = "bold"),
+    axis.title.x = element_text(size = 14, color = "black", face = "bold"),
+    axis.text = element_text(size = 12, color = "black"),
+    axis.text.x = element_text(size = 12, color = "black", angle = 45, hjust = 1, vjust = 1),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    panel.spacing = unit(0.5, "cm"),
+    plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), units = "cm")
+  )
+
+p_figure3b
+
+ggsave(
+  "./results/figures/supp_figure3.pdf", 
+  p_figure3b, 
+  width = 10, 
+  height = 10,
+  dpi = 600,
+  device = cairo_pdf
+)
+
+## Supplementary Figure 4------------------
 df_subPEP2 <- curvePEP_tables %>%
   rbindlist(., idcol = "sample") %>%
   mutate_at("sample", ~ ifelse(. %in% c("D5", "D6", "F7", "M8"), paste("Quartet", .), .)) %>%
@@ -556,12 +688,16 @@ no_thres <- data.frame(
   sample = c("Quartet D5", "Quartet F7", "Quartet M8", "HeLa", "HEK293T"),
   number_thres = c(20817, 23981, 23948, 20983, 23962)
 )
+df_subPEP2$group <- factor(df_subPEP2$group, 
+                           levels = c("\u2265 1 Lab(s)", "\u2265 2 Lab(s)", "\u2265 3 Lab(s)", 
+                                      "\u2265 4 Lab(s)", "\u2265 5 Lab(s)", "\u2265 6 Lab(s)", 
+                                      "\u2265 7 Lab(s)", "\u2265 8 Lab(s)", "\u2265 9 Lab(s)"))
 
-colors.sample <- c("#4CC3D9", "#7BC8A4", "#FFC65D", "#F16745", "#E7298A", "#4D9221")
-names(colors.sample) <- c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")
+df_subPEP3$group <- factor(df_subPEP3$group, 
+                           levels = levels(df_subPEP2$group))
 
-p_figure3c <- ggplot(df_subPEP2, aes(x = group, y = pep_trans)) +
-  geom_boxplot(aes(fill = group), outliers = FALSE) +
+p_supp4 <- ggplot(df_subPEP2, aes(x = group, y = pep_trans)) +
+  geom_boxplot(aes(fill = group), outliers = FALSE, color = "black") +
   facet_wrap(~ sample, ncol = 1, strip.position = "top") +
   geom_line(data = df_subPEP3, aes(x = group, y = feature_n * scale_factor, group = 1),
             inherit.aes = FALSE, linewidth = 1, color = "black") +
@@ -582,7 +718,7 @@ p_figure3c <- ggplot(df_subPEP2, aes(x = group, y = pep_trans)) +
                         name = "Number of Retained Peptides",
                         breaks = seq(0, 40000, 10000))
   ) +
-  labs(fill = "Filter") +
+  labs(x = "Consensus Filtering", fill = "Filter") +
   theme_bw() +
   theme(
     legend.position = "right",
@@ -591,7 +727,7 @@ p_figure3c <- ggplot(df_subPEP2, aes(x = group, y = pep_trans)) +
     strip.text = element_text(size = 14, face = "bold", color = "black", margin = margin(0.3, 0.3, 0.3, 0.3, "cm")),
     strip.background = element_blank(),
     axis.title.y = element_text(size = 14, color = "black", face = "bold"),
-    axis.title.x = element_blank(),
+    axis.title.x = element_text(size = 14, color = "black", face = "bold"),
     axis.text = element_text(size = 12, color = "black"),
     axis.text.x = element_text(size = 12, color = "black", angle = 45, hjust = 1, vjust = 1),
     panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
@@ -599,18 +735,278 @@ p_figure3c <- ggplot(df_subPEP2, aes(x = group, y = pep_trans)) +
     panel.grid.minor.y = element_blank(),
     panel.spacing = unit(0.5, "cm"),
     plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), units = "cm"),
-    plot.title = element_text(size = 16, color = "black", face = "bold")
+    axis.title.y.right = element_text(size = 14, color = "black", face = "bold")
   )
 
-p_figure3c
+p_supp4
 
 ggsave(
-  "./results/figures/supp_figure3.pdf", 
-  p_figure3c, 
+  "./results/figures/supp_figure4.pdf", 
+  p_supp4, 
   width = 9.5, 
   height = 12, 
-  dpi = 600
+  dpi = 600,
+  device = cairo_pdf
 )
+
+## Tier2: 至少3家实验室所有运行证据支持PEP<1% ---------------------------------
+passPEP0.01_peq_tables <- pblapply(passSC0.3_pep_tables, function(tmp_table) {
+  
+  sub_tmp_table <- tmp_table %>%
+    group_by(peptide_sequence, protein_id, lab_id) %>%
+    summarise(pass_n = length(unique(analysis_id[pep < .01&!is.na(pep)])),
+              total_n = length(unique(analysis_id)), .groups = "drop") %>%
+    filter(total_n - pass_n == 0) %>%
+    group_by(peptide_sequence, protein_id) %>%
+    summarise(lab_n = length(unique(lab_id)), .groups = "drop") %>%
+    filter(lab_n >= 3) %>%
+    distinct(peptide_sequence, protein_id)
+  
+  sub_pep_table <- tmp_table %>%
+    inner_join(., sub_tmp_table, by = c("peptide_sequence", "protein_id"))
+  
+  return(sub_pep_table)
+})
+stat_pep_tables <- pblapply(passPEP0.01_peq_tables, function(tmp_table) {
+  stat_tmp_table <- tmp_table %>%
+    ungroup() %>%
+    summarise(peptide_n = length(unique(peptide_sequence)),
+              protein_n = length(unique(protein_id)))
+  return(stat_tmp_table)
+})
+stat_df2 <- rbindlist(stat_pep_tables, idcol = "sample")
+stat_df2$tier = "At least 3 labs support PEP < 1%."
+
+View(passPEP0.01_peq_tables[[1]] %>% filter(peptide_sequence %in% "FDSDVGEFR"))
+
+## Figure 2d PEP vs Coverage ----------------------
+# rm(list = setdiff(ls(), c("grouped_seq_tables", "grouped_pep_tables")))
+# gc()
+PEPvsSC_tables <- pblapply(1:6, function(i) {
+  
+  sub_pro_table <- grouped_seq_tables[[i]] %>%
+    mutate(coverage_label = sapply(coverage, function(x) {
+      if (x <= 10) {
+        y <- "0~10%"
+      } else if (x <= 20 & x > 10) {
+        y <- "10~20%"
+      } else if (x <= 30 & x > 20) {
+        y <- "20~30%"
+      } else if (x <= 40 & x > 30) {
+        y <- "30~40%"
+      } else if (x <= 50 & x > 40) {
+        y <- "40~50%"
+      } else if (x <= 60 & x > 50) {
+        y <- "50~60%"
+      } else if (x <= 70 & x > 60) {
+        y <- "60~70%"
+      } else if (x <= 80 & x > 70) {
+        y <- "70~80%"
+      } else if (x > 80) {
+        y <- "80~100%"
+      }
+      return(y)
+    })) %>%
+    distinct(protein_id, analysis_id, coverage_label)
+  
+  sub_pep_table <- grouped_pep_tables[[i]] %>%
+    filter(!is.na(pep)) %>%
+    inner_join(., sub_pro_table, by = c("analysis_id", "protein_id"))
+  
+  return(sub_pep_table)
+})
+
+df_sub1 <- PEPvsSC_tables[[2]] %>%
+  mutate(pep_trans = -log10(pep)) %>%
+  mutate_at("pep_trans", ~ ifelse(is.infinite(.), 400, .)) %>%
+  mutate_at("sample", ~ ifelse(. %in% c("D5", "D6", "F7", "M8"), paste("Quartet", .), .))
+
+coverage_levels <- c("0~10%", "10~20%", "20~30%", "30~40%", "40~50%", 
+                     "50~60%", "60~70%", "70~80%", "80~100%")
+df_sub1$coverage_label <- factor(df_sub1$coverage_label, levels = coverage_levels)
+
+colors.sample <- c("#4CC3D9", "#7BC8A4", "#FFC65D", "#F16745", "#E7298A", "#4D9221")
+names(colors.sample) <- c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")
+
+p_figure2d <- ggplot(df_sub1, aes(x = coverage_label, y = pep_trans)) +
+  geom_boxplot(aes(fill = coverage_label), outliers = FALSE, color = "black") +
+  facet_grid(cols = vars(sample)) +
+  scale_fill_brewer(palette = "Blues", name = "Range") +
+  scale_x_discrete(name = "Sequence Coverage", expand = c(0.1, 0.05)) +
+  scale_y_continuous(name = expression(-lg(PEP)~Value),  # 使用 expression 正确显示
+                     n.breaks = 10, 
+                     expand = c(0.02, 0.01)) +
+  theme_bw() +
+  theme(
+    legend.position = "none",
+    strip.background = element_blank(),
+    strip.text = element_text(size = 20, color = "black"),
+    axis.text.x = element_text(size = 14, angle = 45, hjust = 1, vjust = 1, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title = element_text(size = 16, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_line(color = "black"),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "gray80", linewidth = 0.5),
+    panel.grid.minor = element_line(color = "gray90", linewidth = 0.3)
+  )
+
+p_figure2d
+
+ggsave("./results/figures/figure2d.pdf", 
+       p_figure2d, width = 7, height = 5, 
+       dpi = 600, device = cairo_pdf)
+
+## Supplementary figure 5--------------
+# rm(list = setdiff(ls(), c("PEPvsSC_tables")))
+# gc()
+df_sub2 <- PEPvsSC_tables[c(1, 3:6)] %>%
+  rbindlist(.) %>%
+  mutate_at("sample", ~ ifelse(. %in% c("D5", "D6", "F7", "M8"), paste("Quartet", .), .)) %>%
+  mutate(pep_trans = -log10(pep)) %>%
+  mutate_at("pep_trans", ~ ifelse(is.infinite(.), 400, .))
+
+colors.sample <- c("#4CC3D9", "#7BC8A4", "#FFC65D", "#F16745", "#E7298A", "#4D9221")
+names(colors.sample) <- c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")
+
+p_sfigure5 <- ggplot(df_sub2, aes(x = coverage_label, y = pep_trans)) +
+  geom_boxplot(aes(fill = coverage_label), outliers = FALSE) +
+  facet_grid(rows = vars(sample)) +
+  scale_fill_brewer(palette = "Blues", name = "Range") +
+  scale_x_discrete(name = "Sequence Coverage", expand = c(0.1, 0.05)) +
+  scale_y_continuous(name = "-lg(PEP)", n.breaks = 10, expand = c(0.02, 0.01)) +
+  theme_bw() +
+  theme(legend.position = "none",
+        strip.background = element_blank(),
+        strip.text = element_text(size = 20),
+        legend.text = element_text(size = 16),
+        legend.title = element_text(size = 20),
+        axis.text.x = element_text(size = 14, angle = 45, hjust = 1, vjust = 1),
+        axis.text.y = element_text(size = 14),
+        axis.title = element_text(size = 16))
+
+ggsave("./results/figures/supp_figure5.pdf", p_sfigure5, width = 9.5, height = 12)
+
+
+## Tier3: 实验室间所有运行证据支持FDR校正后PEP < 1% ----------------------------
+passFDR0.01_pep_tables <- pblapply(passPEP0.01_peq_tables, function(tmp_table) {
+  sub_tmp_table <- tmp_table %>%
+    group_by(peptide_sequence, protein_id) %>%
+    mutate(fdr = p.adjust(pep, method = "BH")) %>%
+    filter(fdr < .01)
+  
+  return(sub_tmp_table)
+})
+stat_pep_tables <- pblapply(passFDR0.01_pep_tables, function(tmp_table) {
+  stat_tmp_table <- tmp_table %>%
+    ungroup() %>%
+    summarise(peptide_n = length(unique(peptide_sequence)),
+              protein_n = length(unique(protein_id)))
+  return(stat_tmp_table)
+})
+stat_df3 <- rbindlist(stat_pep_tables, idcol = "sample")
+stat_df3$tier = "All evidences support FDR < 1%."
+
+View(passFDR0.01_pep_tables[[1]] %>% filter(peptide_sequence %in% "FDSDVGEFR"))
+
+## 合并统计结果
+stat_df_filtered <- rbindlist(list(stat_df0, stat_df1, stat_df2, stat_df3))
+stat_df_filtered_wide <- stat_df_filtered %>%
+  mutate(tier = factor(tier, levels = unique(tier))) %>%
+  mutate(`n (peptides/proteins)` = paste(comma(peptide_n), "\n(", comma(protein_n), ")", sep = "")) %>%
+  reshape2::dcast(., tier ~ sample, value.var = "n (peptides/proteins)")
+
+fwrite(stat_df_filtered_wide, "~/Desktop/tmp_定性.csv")
+saveRDS(passFDR0.01_pep_tables, "./results/tables/1_qualiprop_list_PEPfdr0.01.rds")
+
+## Figure 2e-f 肽段长度/亲疏水性 Gravy score ----------------------
+rm(list = ls())
+gc()
+passFDR0.01_pep_tables <- readRDS("./results/tables/1_qualiprop_list_PEPfdr0.01.rds")
+
+kd_scale <- c(A =  1.8,  R = -4.5, N = -3.5, D = -3.5, C =  2.5,
+              Q = -3.5,  E = -3.5, G = -0.4, H = -3.2, I =  4.5,
+              L =  3.8,  K = -3.9, M =  1.9, F =  2.8, P = -1.6,
+              S = -0.8,  T = -0.7, W = -0.9, Y = -1.3, V =  4.2)
+
+length_gravy_tables <- pblapply(passFDR0.01_pep_tables, function(table_tmp) {
+  
+  sub_pep_table <- table_tmp %>%
+    distinct(peptide_sequence, length) %>%
+    mutate(gravy_score = sapply(peptide_sequence, function(x) {
+      aa <- strsplit(x, split = "")[[1]]
+      bb <- mean(kd_scale[aa], na.rm = TRUE)
+      return(bb)
+    }))
+  
+  return(sub_pep_table)
+})
+
+df_sub1 <- length_gravy_tables %>%
+  rbindlist(., idcol = "sample") %>%
+  mutate_at("sample", ~ ifelse(. %in% c("HEK293T", "HeLa"), ., paste("Quartet", .))) %>%
+  filter(sample %in% c("Quartet D6", "HeLa")) %>%
+  mutate_at("sample", ~ factor(., levels = c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")))
+
+df_sub2 <- df_sub1 %>%
+  group_by(sample) %>%
+  summarise(gravy_median = median(gravy_score),
+            gravy_peak = {
+              d <- density(gravy_score, bw = 1, na.rm = TRUE)
+              d$x[which.max(d$y)]})
+
+colors.sample <- c("#4CC3D9", "#7BC8A4", "#FFC65D", "#F16745", "#E7298A", "#4D9221")
+names(colors.sample) <- c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")
+
+common_theme <- theme_bw() +
+  theme(
+    legend.position = "none",
+    strip.background = element_blank(),
+    strip.text = element_text(size = 16, color = "black"),
+    axis.text.x = element_text(size = 14, angle = 45, hjust = 1, vjust = 1, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title = element_text(size = 16, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.line = element_line(color = "black"),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "gray80", linewidth = 0.5),
+    panel.grid.minor = element_line(color = "gray90", linewidth = 0.3)
+  )
+set.seed(2026)
+p_figure2e <- ggplot(df_sub1, aes(x = gravy_score)) +
+  geom_density(aes(fill = sample), alpha = .8, bw = 1) +
+  geom_vline(data = df_sub2, mapping = aes(xintercept = gravy_peak),
+             linetype = "dashed", color = "black", alpha = 0.6) +
+  facet_grid(rows = vars(sample)) +
+  scale_fill_manual(values = colors.sample) +
+  scale_x_continuous(name = "Gravy Score") +
+  scale_y_continuous(name = "Density") +
+  common_theme
+df_sub3 <- df_sub1 %>%
+  group_by(sample) %>%
+  summarise(length_median = median(length),
+            length_peak = {
+              d <- density(length, bw = 1, na.rm = TRUE)
+              d$x[which.max(d$y)]})
+
+set.seed(2026)
+p_figure2f <- ggplot(df_sub1, aes(x = length)) +
+  geom_density(aes(fill = sample), alpha = .8, bw = 1) +
+  geom_vline(data = df_sub3, mapping = aes(xintercept = length_peak),
+             linetype = "dashed", color = "black", alpha = 0.6) +
+  facet_grid(rows = vars(sample)) +
+  scale_fill_manual(values = colors.sample) +
+  scale_x_continuous(name = "Sequence Length") +
+  scale_y_continuous(name = "Density") +
+  common_theme
+ggsave("./results/figures/figure2e.pdf", 
+       p_figure2e, width = 7, height = 3, 
+       dpi = 600, device = cairo_pdf)
+
+ggsave("./results/figures/figure2f.pdf", 
+       p_figure2f, width = 7, height = 3, 
+       dpi = 600, device = cairo_pdf)
+
 
 ## Supplementary figure 6-7: D5/F7/M8/HeLa/HEK293T肽段长度/亲疏水性-----------
 rm(list = ls())
@@ -730,6 +1126,62 @@ ggsave(
   device = cairo_pdf
 )
 
+## Figure 2g 肽段 m/z ----------------------
+rm(list = ls())
+gc()
+passFDR0.01_pep_tables <- readRDS("./results/tables/1_qualiprop_list_PEPfdr0.01.rds")
+
+mz_tables <- pblapply(passFDR0.01_pep_tables, function(table_tmp) {
+  
+  sub_pep_table <- table_tmp %>%
+    distinct(peptide_sequence, mz_ratio)
+  
+  return(sub_pep_table)
+})
+
+df_sub1 <- mz_tables %>%
+  rbindlist(., idcol = "sample") %>%
+  mutate_at("sample", ~ ifelse(. %in% c("HEK293T", "HeLa"), ., paste("Quartet", .))) %>%
+  filter(sample %in% c("Quartet D6", "HeLa")) %>%
+  mutate_at("sample", ~ factor(., levels = c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")))
+
+df_sub2 <- df_sub1 %>%
+  group_by(sample) %>%
+  summarise(mz_median = median(mz_ratio),
+            mz_peak = {
+              d <- density(mz_ratio, bw = 20, na.rm = TRUE)
+              d$x[which.max(d$y)]})
+
+colors.sample <- c("#4CC3D9", "#7BC8A4", "#FFC65D", "#F16745", "#E7298A", "#4D9221")
+names(colors.sample) <- c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")
+
+set.seed(2026)
+p_figure2g <- ggplot(df_sub1, aes(x = mz_ratio)) +
+  geom_density(aes(fill = sample), alpha = .8, bw = 20) +
+  geom_vline(data = df_sub2, mapping = aes(xintercept = mz_peak),
+             linetype = "dashed", color = "black", alpha = 0.6) +
+  facet_grid(rows = vars(sample)) +
+  scale_fill_manual(values = colors.sample, name = "RM Group") +
+  scale_x_continuous(name = "m/z") +
+  scale_y_continuous(name = "Density") +
+  theme_bw() +
+  theme(
+    text = element_text(color = "black"),
+    legend.position = "none",
+    strip.background = element_blank(),
+    strip.text = element_text(size = 14, color = "black"),
+    axis.text.x = element_text(size = 14, angle = 45, hjust = 1, vjust = 1, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title = element_text(size = 16, color = "black"),
+    axis.line = element_line(color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    panel.background = element_rect(fill = "white", color = NA),
+    panel.grid.major = element_line(color = "gray80", linewidth = 0.5),
+    panel.grid.minor = element_line(color = "gray90", linewidth = 0.3),
+    strip.placement = "outside"
+  )
+ggsave("./results/figures/figure2g.pdf", p_figure2g, width = 7, height = 3, dpi = 600, device = cairo_pdf)
+
 ## Supplementary figure 8: D5/F7/M8/HeLa/HEK293T肽段 m/z -----------
 rm(list = ls())
 gc()
@@ -801,6 +1253,78 @@ ggsave(
   dpi = 600,
   device = cairo_pdf
 )
+
+## Figure 2h 肽段-蛋白质关系 ----------------------
+rm(list = ls())
+gc()
+library(data.table)
+library(dplyr)
+library(pbapply)
+library(ggplot2)
+
+passFDR0.01_pep_tables <- readRDS("./results/tables/1_qualiprop_list_PEPfdr0.01.rds")
+
+match_tables <- pblapply(passFDR0.01_pep_tables, function(table_tmp) {
+  sub_pep_table <- table_tmp %>%
+    group_by(protein_id) %>%
+    summarise(peptide_n = length(unique(peptide_sequence)))
+  
+  return(sub_pep_table)
+})
+
+df_sub1 <- match_tables %>%
+  rbindlist(., idcol = "sample") %>%
+  mutate_at("sample", ~ ifelse(. %in% c("HEK293T", "HeLa"), ., paste("Quartet", .))) %>%
+  mutate(protein_label = sapply(peptide_n, function(x) {
+    if (x == 1) {
+      y <- "1"
+    } else if (x == 2) {
+      y <- "2"
+    } else if (x == 3) {
+      y <- "3"
+    } else if (x == 4) {
+      y <- "4"
+    } else if (x >= 5) {
+      y <- "5+"
+    } 
+    return(y)
+  })) %>%
+  mutate_at("sample", ~ factor(., levels = c("Quartet D5", "Quartet D6", "Quartet F7", "Quartet M8", "HeLa", "HEK293T")))
+df_sub1$protein_label <- factor(df_sub1$protein_label, levels = c("1", "2", "3", "4", "5+"))
+
+df_sub2 <- df_sub1 %>%
+  group_by(sample, protein_label) %>%
+  summarise(protein_n = length(unique(protein_id)), .groups = "drop") %>%
+  group_by(sample) %>%
+  mutate(total_n = sum(protein_n)) %>%
+  mutate(percentage = protein_n/total_n)
+
+set.seed(2026)
+p_figure2h_update <- ggplot(df_sub2, aes(x = sample, y = percentage * 100)) +
+  geom_bar(aes(fill = protein_label), stat = "identity",
+           width = .7, color = "black") +
+  scale_fill_brewer(palette = "Blues", name = "# Peptides", direction = 1) +
+  scale_y_continuous(name = "Percentage of proteins (%)", breaks = seq(0, 100, 10)) +
+  theme_bw() +
+  theme(
+    legend.position = "right",
+    legend.text = element_text(size = 16, color = "black"),
+    legend.title = element_text(size = 20, color = "black"),
+    axis.text.x = element_text(size = 14, color = "black"),
+    axis.text.y = element_text(size = 14, color = "black"),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 16, color = "black"),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+    axis.ticks = element_line(color = "black"),
+    strip.background = element_blank(),
+    strip.text = element_text(size = 14, color = "black")
+  )
+ggsave("./results/figures/figure2h.pdf", 
+       p_figure2h_update, 
+       width = 10, 
+       height = 4.5, 
+       dpi = 600, 
+       device = cairo_pdf)
 
 ## supplementary figure 10a----------------------
 rm(list = ls())

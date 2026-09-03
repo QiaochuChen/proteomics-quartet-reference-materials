@@ -431,7 +431,7 @@ ggsave(
   limitsize = FALSE
 )
 
-## Figure 3g: 整理2020年6批数据集中的比例定量值 -----------
+## Figure 3f: 整理2020年6批数据集中的比例定量值 -----------
 all_tables <- readRDS("./data/stability/quantdata_list_pep_all_longterm.rds")
 filtered_tables <- pblapply(all_tables, function(tmp_table) test_table <- tmp_table %>% filter(time_day <= 22))
 test_tables <- filtered_tables %>% rbindlist %>% split(., by = c("lab_id"))
@@ -500,7 +500,7 @@ df_test <- df_limma %>%
   dplyr::rename(FC_new = value) %>%
   select(peptide_sequence, protein_id, group, FC_new, FC_old, U)
 
-## Figure 3g：散点图确认相关性 -------------------
+## Figure 3f：散点图确认相关性 -------------------
 colors.group <- c("#4CC3D9", "#FFC65D", "#F16745", "#999")
 names(colors.group) <- c("D5/D6", "F7/D6", "M8/D6", "Reversed")
 
@@ -538,9 +538,9 @@ p_cor_final <- ggplot(sub_test, aes(x = FC_old, y = FC_new)) +
         panel.spacing = unit(1, "cm"),
         plot.margin = unit(c(.5, .5, .5, .5), "cm"))
 
-ggsave("./results/figures/figure3g.pdf", p_cor_final, height = 5.2, width = 14, limitsize = FALSE)
+ggsave("./results/figures/figure3f.pdf", p_cor_final, height = 5.2, width = 14, limitsize = FALSE)
 
-## Figure 3f: Quartet RNA 差异集 -------------------
+## Figure 3g: Quartet RNA 差异集 -------------------
 db_uniprot <- readAAStringSet("./uniprotkb_proteome_UP000005640_2024_09_03.fasta")
 db_uniprot <- data.frame(protein_sequence = as.character(db_uniprot)) %>%
   tibble::rownames_to_column("entry") %>%
@@ -580,7 +580,7 @@ df_test_combined <- df_test_rna %>%
   group_by(`Gene symbol`, `Sample pair`, FC_rna) %>%
   summarise_at("FC_pep", mean)
 
-## Figure 3f: 散点图确认相关性 -------------------
+## Figure 3g: 散点图确认相关性 -------------------
 colors.group <- c("#4CC3D9", "#FFC65D", "#F16745", "#999")
 names(colors.group) <- c("D5/D6", "F7/D6", "M8/D6", "Reversed")
 
@@ -620,7 +620,7 @@ p_cor_final <- ggplot(sub_test, aes(x = FC_rna, y = FC_pep)) +
         panel.spacing = unit(1, "cm"),
         plot.margin = unit(c(.5, .5, .5, .5), "cm"))
 
-ggsave("./results/figures/figure3f.pdf", 
+ggsave("./results/figures/figure3g.pdf", 
        p_cor_final, 
        height = 5.2, 
        width = 14, 
